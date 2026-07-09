@@ -722,10 +722,10 @@ strophe_origins9g@icloud.com
   const SEL_DOB   = "#emailSignupBirthdate";
   const SEL_OPTIN = "#termsOfAgreement";
 
-  // Something that only appears AFTER a successful submit (to confirm it worked).
+ // Something that only appears AFTER a successful submit (to confirm it worked).
   // Leave as null to skip the check and just proceed after submitting.
   const SUCCESS_TEXT = "successfully signed up";
-
+ 
   // The success overlay must be closed before the next entry. Set ONE of these to
   // match its close control (found via right-click -> Inspect on the real page):
   //   - CLOSE_BUTTON_TEXT: the visible text on the close/done button, e.g. "Close".
@@ -739,30 +739,31 @@ strophe_origins9g@icloud.com
   const SEL_DIALOG  = ".ReactModal__Content";   // the dialog box to click OUTSIDE of
   const CLOSE_BUTTON_TEXT = null;
   const SEL_CLOSE = '[data-testid="modalCloseButton"]';   // fallback if overlay-click fails
-
+ 
   // Path of the contest form page (where the "Get Email Updates" button is), so
   // the script can return there after each submit. Usually "/" or "/contest".
   const FORM_PATH = "/";
-
+ 
   // Human-like pacing (milliseconds). Generous by default; raise to go gentler.
   const WAIT_BEFORE_START = [4000, 9000];   // pause after page load before doing anything
   const WAIT_BETWEEN_STEPS = [1200, 3500];  // pause between each field/action
   const WAIT_AFTER_SUBMIT = [3000, 6000];   // pause after submit before moving on
   const TYPE_DELAY = [60, 160];             // pause between individual keystrokes
-
+ 
   // Failure handling.
   const MAX_RETRIES = 2;               // extra attempts per email after the first (3 tries total)
   const ABORT_AFTER_CONSECUTIVE = 5;   // stop entirely if this many emails fail in a row
   const SUCCESS_TIMEOUT = 12000;       // ms to wait for the success message before counting a failure
-
+  const ERROR_COOLDOWN = 10 * 60 * 1000;  // pause this long (ms) after any error before continuing
+ 
   // ===========================================================================
-
+ 
   const DONE_KEY = "contest_auto_done_v1";
-
+ 
   const rand = ([lo, hi]) => lo + Math.random() * (hi - lo);
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const step = () => sleep(rand(WAIT_BETWEEN_STEPS));
-
+ 
   function getDone() {
     try { return new Set(JSON.parse(localStorage.getItem(DONE_KEY) || "[]")); }
     catch { return new Set(); }
@@ -775,7 +776,7 @@ strophe_origins9g@icloud.com
     const done = getDone(), failed = getFailed();
     return EMAILS.find(e => !done.has(e) && !failed.has(e)) || null;
   }
-
+ 
   // Emails that exhausted their retries — skipped so a bad address never blocks the
   // rest, and skipped on restart too (clear the key to retry them; see final log).
   const FAILED_KEY = "contest_auto_failed_v1";
@@ -787,7 +788,7 @@ strophe_origins9g@icloud.com
     const s = getFailed(); s.add(email);
     localStorage.setItem(FAILED_KEY, JSON.stringify([...s]));
   }
-
+ 
   // Per-email attempt counter that PERSISTS across page reloads, so even if a failure
   // reloads the page, an address can't be retried endlessly.
   const ATTEMPTS_KEY = "contest_auto_attempts_v1";
@@ -800,30 +801,50 @@ strophe_origins9g@icloud.com
     localStorage.setItem(ATTEMPTS_KEY, JSON.stringify(a));
     return a[email];
   }
-
+ 
   // Consecutive-failure streak (persists across reloads) to detect a real block.
   const STREAK_KEY = "contest_auto_streak_v1";
   const getStreak = () => parseInt(localStorage.getItem(STREAK_KEY) || "0", 10);
   const setStreak = n => localStorage.setItem(STREAK_KEY, String(n));
-
+ 
   // Reload to a clean form page so the next entry starts fresh (this is the
   // "refresh between signups" — it also discards the success/error overlay).
   function reloadForNext() {
     location.href = location.origin + FORM_PATH;
   }
-
+ 
+  // Cooldown after an error: persist a "paused until" timestamp so the wait
+  // survives page reloads, and honor it at the start of each run.
+  const COOLDOWN_KEY = "contest_auto_cooldown_until_v1";
+  function startCooldown() {
+    localStorage.setItem(COOLDOWN_KEY, String(Date.now() + ERROR_COOLDOWN));
+  }
+  async function waitOutCooldown() {
+    const until = parseInt(localStorage.getItem(COOLDOWN_KEY) || "0", 10);
+    let remaining = until - Date.now();
+    if (remaining <= 0) { localStorage.removeItem(COOLDOWN_KEY); return; }
+    console.log(`[contest] Cooling down after an error — waiting ${Math.ceil(remaining / 60000)} min before continuing.`);
+    // Sleep in chunks so a long wait still logs progress and stays responsive.
+    while (remaining > 0) {
+      await sleep(Math.min(remaining, 30000));
+      remaining = parseInt(localStorage.getItem(COOLDOWN_KEY) || "0", 10) - Date.now();
+    }
+    localStorage.removeItem(COOLDOWN_KEY);
+    console.log(`[contest] Cooldown over — resuming.`);
+  }
+ 
   // "pending" = the email we've submitted but not yet seen confirmed (survives the
   // page navigation that a form submit causes).
   const PENDING_KEY = "contest_auto_pending_v1";
   const getPending = () => localStorage.getItem(PENDING_KEY) || null;
   const setPending = e => localStorage.setItem(PENDING_KEY, e);
   const clearPending = () => localStorage.removeItem(PENDING_KEY);
-
+ 
   function buttonByText(txt) {
     return [...document.querySelectorAll("button")]
       .find(b => b.textContent.trim() === txt) || null;
   }
-
+ 
   // Click an element the way a mouse does: full pointer + mouse event sequence,
   // not just a bare .click(). Some forms/checkboxes only respond to this.
   function realClick(el) {
@@ -840,7 +861,7 @@ strophe_origins9g@icloud.com
     el.dispatchEvent(new MouseEvent("mouseup", o));
     el.dispatchEvent(new MouseEvent("click", o));
   }
-
+ 
   // Set a value the way frameworks (React etc.) expect: native setter + input/change events.
   function setValue(el, value) {
     const proto = el.tagName === "TEXTAREA"
@@ -851,17 +872,17 @@ strophe_origins9g@icloud.com
     el.dispatchEvent(new Event("input", { bubbles: true }));
     el.dispatchEvent(new Event("change", { bubbles: true }));
   }
-
+ 
   // Type a value character by character, firing the same key + input events a real
   // person's typing does. Needed for forms whose validation ignores a pasted/set
   // value, and for fields that auto-format (like the dash-inserting DOB field).
   const nativeSetter = Object.getOwnPropertyDescriptor(
     window.HTMLInputElement.prototype, "value").set;
-
+ 
   function fireKey(el, type, ch) {
     el.dispatchEvent(new KeyboardEvent(type, { key: ch, bubbles: true, cancelable: true }));
   }
-
+ 
   async function typeInto(el, text) {
     el.focus();
     nativeSetter.call(el, "");                 // start from empty
@@ -877,12 +898,12 @@ strophe_origins9g@icloud.com
     el.dispatchEvent(new Event("change", { bubbles: true }));
     el.blur();
   }
-
+ 
   // The DOB field auto-inserts dashes, so we type the digits and let it format.
   async function fillDob(el) {
     await typeInto(el, DOB);
   }
-
+ 
   async function waitFor(selectorOrFn, timeout = 10000) {
     const start = Date.now();
     while (Date.now() - start < timeout) {
@@ -893,11 +914,11 @@ strophe_origins9g@icloud.com
     }
     return null;
   }
-
+ 
   const successVisible = () =>
     !!SUCCESS_TEXT && !!document.body && document.body.innerText.includes(SUCCESS_TEXT);
   const onFormPage = () => !!buttonByText(OPEN_BUTTON_TEXT);
-
+ 
   // Click a point on the overlay backdrop that is OUTSIDE the dialog box, the way
   // clicking outside the modal by hand dismisses it.
   function clickOutsideDialog() {
@@ -923,14 +944,14 @@ strophe_origins9g@icloud.com
     target.dispatchEvent(new MouseEvent("click", o));
     return true;
   }
-
+ 
   // Dismiss the success overlay so the form is usable again for the next entry.
   async function closeSuccess() {
     // Preferred: click outside the dialog (ReactModal backdrop dismiss).
     clickOutsideDialog();
     let ready = await waitFor(
       () => (!successVisible() && onFormPage()) ? document.body : null, 4000);
-
+ 
     // Fallback 1: the X button by selector.
     if (!ready && SEL_CLOSE) {
       const x = document.querySelector(SEL_CLOSE);
@@ -946,20 +967,20 @@ strophe_origins9g@icloud.com
     }
     if (!ready) throw new Error("could not close the success overlay");
   }
-
+ 
   async function doEntry(email) {
     // Open the pop-up form.
     const openBtn = buttonByText(OPEN_BUTTON_TEXT);
     if (!openBtn) throw new Error("open button not found");
     realClick(openBtn);
-
+ 
     const emailEl = await waitFor(SEL_EMAIL);
     if (!emailEl) throw new Error("email field never appeared");
     await step();
-
+ 
     await typeInto(emailEl, email);   // type it out, key by key
     await step();
-
+ 
     const dobEl = document.querySelector(SEL_DOB);
     if (dobEl) {
       await fillDob(dobEl);
@@ -967,7 +988,7 @@ strophe_origins9g@icloud.com
     } else {
       throw new Error(`DOB field not found — check SEL_DOB ("${SEL_DOB}")`);
     }
-
+ 
     const optin = document.querySelector(SEL_OPTIN);
     if (optin) {
       if (!optin.checked) {
@@ -978,19 +999,19 @@ strophe_origins9g@icloud.com
     } else {
       throw new Error(`opt-in checkbox not found — check SEL_OPTIN ("${SEL_OPTIN}")`);
     }
-
+ 
     const submitBtn = buttonByText(SUBMIT_BUTTON_TEXT);
     if (!submitBtn) throw new Error("submit button not found");
     realClick(submitBtn);
     // Submitting may navigate the page. Confirmation is handled on the next load
     // (or just below, if the submit was AJAX and didn't navigate).
   }
-
+ 
   async function main() {
     // One entry per page load, then refresh for the next. Progress, attempt counts,
     // and the failure streak all persist in localStorage across the reloads.
     if (!onFormPage()) return;   // not the form page (e.g. an error page) — do nothing
-
+ 
     const email = nextEmail();
     if (!email) {
       const done = getDone().size, failed = getFailed().size;
@@ -1001,14 +1022,17 @@ strophe_origins9g@icloud.com
       }
       return;   // finished — stop reloading
     }
-
+ 
+    // If a previous error started a cooldown, wait it out before continuing.
+    await waitOutCooldown();
+ 
     const maxAttempts = MAX_RETRIES + 1;
     const attempt = bumpAttempt(email);          // survives reloads
     const remaining = EMAILS.length - getDone().size - getFailed().size;
     console.log(`[contest] Entering ${email} (attempt ${attempt}/${maxAttempts}, ${remaining} left)`);
-
+ 
     await sleep(rand(WAIT_BEFORE_START));
-
+ 
     try {
       await doEntry(email);
       if (SUCCESS_TEXT) {
@@ -1020,6 +1044,7 @@ strophe_origins9g@icloud.com
       console.log(`[contest] OK: ${email}`);
     } catch (e) {
       console.warn(`[contest] attempt ${attempt}/${maxAttempts} failed for ${email}: ${e.message}`);
+      startCooldown();   // pause before the next attempt / next email
       if (attempt >= maxAttempts) {
         markFailed(email);
         const streak = getStreak() + 1;
@@ -1027,17 +1052,18 @@ strophe_origins9g@icloud.com
         console.warn(`[contest] SKIPPED ${email} after ${maxAttempts} attempts.`);
         if (streak >= ABORT_AFTER_CONSECUTIVE) {
           console.error(`[contest] STOPPING: ${streak} emails failed in a row — likely a real block or a broken form. Nothing will be lost; fix the issue and reload to resume.`);
+          localStorage.removeItem(COOLDOWN_KEY);   // no point holding a cooldown while halted
           return;   // do NOT reload — halt for review
         }
       }
       // else: will retry this same email on the next load
     }
-
+ 
     // Refresh for the next entry (or the retry).
     await sleep(rand(WAIT_AFTER_SUBMIT));
     reloadForNext();
   }
-
+ 
   // Run once the DOM is ready (also safe if injected very early).
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", main);
