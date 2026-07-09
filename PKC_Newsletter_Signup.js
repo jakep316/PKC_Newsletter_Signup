@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Contest Auto-Entry
 // @namespace    local
-// @version      1.3
+// @version      1.4
 // @description  Fills and submits the contest signup form for a list of your own email aliases, at a human-like pace, resuming where it left off. Runs in your real browser session.
 // @match        https://www.pokemoncenter.com/*
 // @run-at       document-idle
